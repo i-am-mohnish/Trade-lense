@@ -1,0 +1,713 @@
+name: Build TradeLens Pocket APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/bootstrap-build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Android 14+ APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android API 36
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Create native Android project
+        shell: bash
+        run: |
+          rm -rf generated-app
+
+          mkdir -p generated-app/app/src/main/java/com/tradelens/pocket
+          mkdir -p generated-app/app/src/main/res/drawable
+          mkdir -p generated-app/app/src/main/res/values
+
+          cat > generated-app/settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "TradeLensPocket"
+          include(":app")
+          EOF
+
+          cat > generated-app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.12.2' apply false
+          }
+          EOF
+
+          cat > generated-app/gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
+          android.useAndroidX=false
+          android.nonTransitiveRClass=true
+          EOF
+
+          cat > generated-app/app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'com.tradelens.pocket'
+
+              compileSdk 36
+              buildToolsVersion "35.0.0"
+
+              defaultConfig {
+                  applicationId "com.tradelens.pocket"
+
+                  minSdk 34
+                  targetSdk 36
+
+                  versionCode 4
+                  versionName "0.4.0"
+              }
+
+              buildTypes {
+                  debug {
+                      debuggable true
+                  }
+
+                  release {
+                      minifyEnabled false
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+
+              lint {
+                  abortOnError true
+              }
+          }
+          EOF
+
+          cat > generated-app/app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission
+                  android:name="android.permission.FOREGROUND_SERVICE" />
+
+              <uses-permission
+                  android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+
+              <application
+                  android:allowBackup="true"
+                  android:icon="@drawable/ic_launcher"
+                  android:roundIcon="@drawable/ic_launcher"
+                  android:label="TradeLens Pocket"
+                  android:supportsRtl="true"
+                  android:theme="@style/AppTheme">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:screenOrientation="unspecified">
+
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+
+                  </activity>
+
+                  <service
+                      android:name=".ChartCaptureService"
+                      android:exported="false"
+                      android:foregroundServiceType="mediaProjection" />
+
+              </application>
+
+          </manifest>
+          EOF
+
+          cat > generated-app/app/src/main/res/values/styles.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+
+          <resources>
+
+              <style
+                  name="AppTheme"
+                  parent="@android:style/Theme.Material.Light.NoActionBar">
+
+                  <item name="android:fontFamily">sans</item>
+
+                  <item name="android:colorAccent">
+                      #0A8F7A
+                  </item>
+
+                  <item name="android:statusBarColor">
+                      #081A30
+                  </item>
+
+                  <item name="android:navigationBarColor">
+                      #081A30
+                  </item>
+
+                  <item name="android:windowLightStatusBar">
+                      false
+                  </item>
+
+                  <item name="android:windowLightNavigationBar">
+                      false
+                  </item>
+
+              </style>
+
+          </resources>
+          EOF
+
+          cat > generated-app/app/src/main/res/drawable/ic_launcher.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+
+          <vector
+              xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="48dp"
+              android:height="48dp"
+              android:viewportWidth="48"
+              android:viewportHeight="48">
+
+              <path
+                  android:fillColor="#081A30"
+                  android:pathData="M4,4h40v40h-40z" />
+
+              <path
+                  android:fillColor="#19B89A"
+                  android:pathData="M9,31 L17,22 L23,27 L34,13 L39,17 L24,37 L18,31 L13,36 Z" />
+
+          </vector>
+          EOF
+
+          cat > generated-app/app/src/main/java/com/tradelens/pocket/MainActivity.java <<'EOF'
+          package com.tradelens.pocket;
+
+          import android.app.Activity;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.graphics.Color;
+          import android.graphics.Typeface;
+          import android.graphics.drawable.GradientDrawable;
+          import android.media.projection.MediaProjectionManager;
+          import android.os.Bundle;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.view.WindowInsets;
+          import android.widget.Button;
+          import android.widget.CheckBox;
+          import android.widget.LinearLayout;
+          import android.widget.ScrollView;
+          import android.widget.Space;
+          import android.widget.TextView;
+          import android.widget.Toast;
+
+          import java.util.ArrayList;
+          import java.util.List;
+
+          public class MainActivity extends Activity {
+
+              private static final int CAPTURE_REQUEST = 4010;
+
+              private final List<CheckBox> requiredIndicators =
+                  new ArrayList<>();
+
+              private TextView calibrationStatus;
+              private TextView tradeDayScore;
+              private TextView liquidityScore;
+              private TextView setupScore;
+              private TextView decisionText;
+              private TextView sessionStatus;
+
+              private int navy;
+              private int teal;
+              private int ink;
+              private int muted;
+              private int page;
+              private int card;
+              private int positive;
+              private int warning;
+              private int danger;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+
+                  super.onCreate(savedInstanceState);
+
+                  navy = Color.rgb(8, 26, 48);
+
+                  teal = Color.rgb(
+                      10,
+                      143,
+                      122
+                  );
+
+                  ink = Color.rgb(
+                      20,
+                      35,
+                      53
+                  );
+
+                  muted = Color.rgb(
+                      92,
+                      107,
+                      124
+                  );
+
+                  page = Color.rgb(
+                      244,
+                      247,
+                      251
+                  );
+
+                  card = Color.WHITE;
+
+                  positive = Color.rgb(
+                      25,
+                      142,
+                      92
+                  );
+
+                  warning = Color.rgb(
+                      191,
+                      124,
+                      20
+                  );
+
+                  danger = Color.rgb(
+                      188,
+                      58,
+                      55
+                  );
+
+                  getWindow().setStatusBarColor(navy);
+                  getWindow().setNavigationBarColor(navy);
+
+                  LinearLayout root =
+                      new LinearLayout(this);
+
+                  root.setOrientation(
+                      LinearLayout.VERTICAL
+                  );
+
+                  root.setBackgroundColor(page);
+
+                  root.setPadding(
+                      dp(16),
+                      dp(12),
+                      dp(16),
+                      dp(28)
+                  );
+
+                  root.setOnApplyWindowInsetsListener(
+                      (view, insets) -> {
+
+                          android.graphics.Insets bars =
+                              insets.getInsets(
+                                  WindowInsets.Type.systemBars()
+                              );
+
+                          view.setPadding(
+                              dp(16),
+                              Math.max(
+                                  dp(12),
+                                  bars.top + dp(8)
+                              ),
+                              dp(16),
+                              Math.max(
+                                  dp(28),
+                                  bars.bottom + dp(12)
+                              )
+                          );
+
+                          return insets;
+                      }
+                  );
+
+                  ScrollView scroll =
+                      new ScrollView(this);
+
+                  scroll.setFillViewport(true);
+
+                  scroll.addView(
+                      root,
+                      new ScrollView.LayoutParams(
+                          ScrollView.LayoutParams.MATCH_PARENT,
+                          ScrollView.LayoutParams.WRAP_CONTENT
+                      )
+                  );
+
+                  setContentView(scroll);
+
+                  buildHeader(root);
+
+                  buildDemoBanner(root);
+
+                  buildTodaySection(root);
+
+                  buildChartCalibration(root);
+
+                  buildChartSession(root);
+
+                  buildLiquiditySection(root);
+
+                  buildTradingDaysSection(root);
+
+                  buildDisclaimer(root);
+              }
+
+              private void buildHeader(
+                  LinearLayout root
+              ) {
+
+                  TextView title =
+                      text(
+                          "TradeLens Pocket",
+                          28,
+                          navy,
+                          true
+                      );
+
+                  root.addView(title);
+
+                  TextView subtitle =
+                      text(
+                          "Mobile options trading copilot",
+                          14,
+                          muted,
+                          false
+                      );
+
+                  subtitle.setPadding(
+                      0,
+                      dp(2),
+                      0,
+                      dp(14)
+                  );
+
+                  root.addView(subtitle);
+              }
+
+              private void buildDemoBanner(
+                  LinearLayout root
+              ) {
+
+                  LinearLayout box =
+                      card();
+
+                  box.setBackground(
+                      roundRect(
+                          Color.rgb(
+                              232,
+                              244,
+                              241
+                          ),
+                          18
+                      )
+                  );
+
+                  TextView label =
+                      text(
+                          "DEMO MODE",
+                          12,
+                          teal,
+                          true
+                      );
+
+                  box.addView(label);
+
+                  TextView message =
+                      text(
+                          "This build validates the native Android app, chart permission flow, indicators and trading-intelligence interface. Live broker data and calibrated trade probabilities are not connected yet.",
+                          13,
+                          ink,
+                          false
+                      );
+
+                  message.setPadding(
+                      0,
+                      dp(6),
+                      0,
+                      0
+                  );
+
+                  box.addView(message);
+
+                  root.addView(
+                      box,
+                      cardParams()
+                  );
+              }
+
+              private void buildTodaySection(
+                  LinearLayout root
+              ) {
+
+                  sectionTitle(
+                      root,
+                      "TODAY"
+                  );
+
+                  LinearLayout box =
+                      card();
+
+                  box.addView(
+                      text(
+                          "Trade Day Score",
+                          14,
+                          muted,
+                          true
+                      )
+                  );
+
+                  tradeDayScore =
+                      text(
+                          "72 / 100",
+                          34,
+                          positive,
+                          true
+                      );
+
+                  tradeDayScore.setPadding(
+                      0,
+                      dp(4),
+                      0,
+                      dp(2)
+                  );
+
+                  box.addView(
+                      tradeDayScore
+                  );
+
+                  box.addView(
+                      text(
+                          "Selective trading day • Prefer confirmed setups • Demo score",
+                          13,
+                          ink,
+                          false
+                      )
+                  );
+
+                  addDivider(box);
+
+                  LinearLayout metrics =
+                      new LinearLayout(this);
+
+                  metrics.setOrientation(
+                      LinearLayout.HORIZONTAL
+                  );
+
+                  metrics.addView(
+                      metric(
+                          "Bias",
+                          "WAIT"
+                      ),
+                      weightParams()
+                  );
+
+                  metrics.addView(
+                      metric(
+                          "Best window",
+                          "09:45–11:30"
+                      ),
+                      weightParams()
+                  );
+
+                  metrics.addView(
+                      metric(
+                          "Risk",
+                          "MODERATE"
+                      ),
+                      weightParams()
+                  );
+
+                  box.addView(metrics);
+
+                  root.addView(
+                      box,
+                      cardParams()
+                  );
+              }
+
+              private void buildChartCalibration(
+                  LinearLayout root
+              ) {
+
+                  sectionTitle(
+                      root,
+                      "CHART SETUP & CALIBRATION"
+                  );
+
+                  LinearLayout box =
+                      card();
+
+                  box.addView(
+                      text(
+                          "Add these indicators to the chart that TradeLens will analyse:",
+                          14,
+                          ink,
+                          false
+                      )
+                  );
+
+                  addRequiredIndicator(
+                      box,
+                      "VWAP"
+                  );
+
+                  addRequiredIndicator(
+                      box,
+                      "EMA 9"
+                  );
+
+                  addRequiredIndicator(
+                      box,
+                      "EMA 21"
+                  );
+
+                  addRequiredIndicator(
+                      box,
+                      "RSI 14"
+                  );
+
+                  addRequiredIndicator(
+                      box,
+                      "Volume"
+                  );
+
+                  addRequiredIndicator(
+                      box,
+                      "ATR 14"
+                  );
+
+                  CheckBox optional =
+                      indicator(
+                          "Supertrend 10,3  •  optional",
+                          false
+                      );
+
+                  box.addView(optional);
+
+                  calibrationStatus =
+                      text(
+                          "0 / 6 required indicators confirmed",
+                          13,
+                          warning,
+                          true
+                      );
+
+                  calibrationStatus.setPadding(
+                      0,
+                      dp(8),
+                      0,
+                      dp(10)
+                  );
+
+                  box.addView(
+                      calibrationStatus
+                  );
+
+                  Button verify =
+                      primaryButton(
+                          "VERIFY CHART SETUP"
+                      );
+
+                  verify.setOnClickListener(
+                      view ->
+                          verifyCalibration()
+                  );
+
+                  box.addView(verify);
+
+                  root.addView(
+                      box,
+                      cardParams()
+                  );
+              }
+
+              private void buildChartSession(
+                  LinearLayout root
+              ) {
+
+                  sectionTitle(
+                      root,
+                      "CHART SESSION"
+                  );
+
+                  LinearLayout box =
+                      card();
+
+                  box.addView(
+                      text(
+                          "Android will ask which app or screen you want to share. A new permission is required whenever a fresh chart-reading session begins.",
+                          13,
+                          ink,
+                          false
+                      )
+                  );
+
+                  sessionStatus =
+                      text(
+                          "Session inactive",
+                          13,
+                          muted,
+                          true
+                      );
+
+                  sessionStatus.setPadding(
+                      0,
+                      dp(10),
+                      0,
+                      dp(10)
+                  );
+
+                  box.addView(
+                      sessionStatus
+                  );
+
+                  Button start =
+                      primaryButton(
+                   
